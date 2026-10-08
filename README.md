@@ -12,8 +12,11 @@
 | Sumit Pandey | Team member |
 
 ---
+## 1. Project Name
 
-## 1. Problem Statement
+VYOM+ Voucher Intelligence: Hybrid Open-Source LLM Voucher Classifier
+
+## 2. Problem Statement
 
 Accounting software needs every transaction filed under the correct **voucher type**. Today this is done by hand or with brittle keyword rules. The voucher type is determined by the *accounting meaning* of a transaction, not by any one field. Several pairs look almost identical on paper:
 
@@ -27,7 +30,13 @@ Accounting software needs every transaction filed under the correct **voucher ty
 
 Given an Excel dataset of structured transactions **with the voucher-type column removed**, our system predicts exactly one of the 27 target categories for each row (Purchase, Sales, Purchase Return / Debit Note, Sales Return / Credit Note, Payment, Receipt, Contra, Journal, Salary / Payroll, Attendance, Purchase Order, Sales Order, Receipt Note, Delivery Note, Rejection In, Rejection Out, Stock Journal, Physical Stock, Material In, Material Out, Job Work In Order, Job Work Out Order, Import, Export, Expense, Advance / Prepayment, Other / Miscellaneous).
 
-## 2. Proposed Solution
+## 3. Project Overview
+
+VYOM+ Voucher Intelligence is a hybrid pipeline that reads an Excel file of already-structured transactions (the voucher-type column is intentionally missing) and predicts one appropriate voucher category per row. An open-source LLM is the primary classifier. Lightweight accounting-aware preprocessing and candidate narrowing support it so that it reasons over the complete transaction context and chooses among a few plausible options instead of all 27. The output is structured JSON / Excel that can be evaluated programmatically, with a confidence score and a short explanation for each prediction.
+
+This is not an OCR or invoice-extraction project. It is the classification layer that sits between invoice extraction and automated voucher creation.
+
+## 4. Proposed Solution
 
 A **hybrid pipeline** in which an open-source LLM is the primary classifier. Lightweight accounting-aware preprocessing and candidate narrowing help the LLM and keep inference fast. The LLM reasons over the whole transaction context and returns a structured, machine-evaluable answer.
 
@@ -38,13 +47,30 @@ A **hybrid pipeline** in which an open-source LLM is the primary classifier. Lig
 5. **Ambiguity handling** runs a second-pass check for low-confidence rows.
 6. **Output and evaluation** produces a JSON/Excel result and a reproducible metrics report.
 
-## 3. Target Users
+## 5. Objectives
+One of 27 categories predicted per transaction.
+Open-source LLM reasoning over all fields.
+Separating similar categories.
+Schema-valid output with confidence and explanation.
+Robust handling of missing or ambiguous records.
+Reproducible evaluation.
+
+## 6. Target Users
 
 - Accountants, CA firms and bookkeeping teams processing high transaction volumes
 - ERP / accounting platforms such as VYOM+ that need automated voucher creation
 - Developers building the bridge between invoice extraction (OCR) and automated voucher posting
 
-## 4. Selected Open-Source AI Technology
+## 7. Open-Source AI Technology Selected
+Primary classifier: open-weight 7B-class instruct LLM (Qwen; Gemma / Llama / Mistral as alternatives)
+Adaptation: LoRA / QLoRA fine-tuning
+Inference: quantized local inference (llama.cpp / vLLM)
+Structured output: grammar / JSON-schema constrained decoding
+Candidate retrieval: open embedding model (BGE / E5)
+
+No proprietary API is used as the classification engine.
+
+## 8. Why This Technology Was Selected
 
 | Component | Choice | Why |
 |---|---|---|
@@ -56,11 +82,11 @@ A **hybrid pipeline** in which an open-source LLM is the primary classifier. Lig
 
 No proprietary API is used as the classification engine.
 
-## 5. Role of AI
+## 9. AI's Role in the System
 
 The LLM is the **core decision-maker**, not an add-on. Keyword rules cannot tell a Purchase from a Sales Return when the fields look alike. The model reads all fields together (parties, amounts, tax, item text, references, flags) and reasons about the accounting meaning. The surrounding rules and embeddings only give it better evidence and a smaller choice set.
 
-## 6. Architecture
+## 10. Architecture
 
 ```
             +------------------+
@@ -101,7 +127,19 @@ The LLM is the **core decision-maker**, not an add-on. Keyword rules cannot tell
           +-----------------------+
 ```
 
-## 7. Data Flow
+## 11. Component-Level Architecture
+
+| Component | Input | Processing | Output | Technology |
+| --- | --- | --- | --- | --- |
+| **Ingestion & Normalization** | Excel (.xlsx) | Schema mapping, type cleaning, missing-value handling | Clean transaction rows | `pandas`, `openpyxl` |
+| **Feature Enrichment** | Normalized rows | Derives accounting signals and evidence | Enriched rows | Python |
+| **Candidate Narrowing** | Enriched rows | Embeddings + rules select top-k classes and examples | Class shortlist + examples | BGE/E5, FAISS |
+| **LLM Classifier** | Row + evidence + shortlist | Fine-tuned LLM with constrained JSON output | Voucher type + confidence + reason | Qwen 7B, PEFT, bitsandbytes |
+| **Second-Pass Resolution** | Low-confidence rows | Re-evaluates using full context | Resolved / flagged prediction | Same LLM |
+| **Output & Evaluation** | Predictions + labels | Export and metric calculation | JSON/Excel + report | `pandas`, `scikit-learn` |
+| **Interface (Optional)** | Excel file | Upload and prediction download | Prediction file | Streamlit / CLI |
+
+## 12. Data Flow
 
 1. **Input:** an Excel file in which each row is a transaction (seller, buyer, invoice no. and date, items, quantities, taxable value, GST, discounts, freight, payment info, currency, import/export, payroll, debit/credit, return info, order and delivery references, and so on).
 2. **Normalization:** column names are mapped to a canonical schema, types are cleaned, and missing fields are marked explicitly instead of dropped.
@@ -111,7 +149,70 @@ The LLM is the **core decision-maker**, not an add-on. Keyword rules cannot tell
 6. **Resolution:** rows below a confidence threshold get a second pass. Rows that remain unresolved are labeled `Other / Miscellaneous` and flagged for review.
 7. **Output:** one prediction per row.
 
-## 8. Expected Output
+
+## 13. Agentic Workflow
+
+The system uses a **controlled, deterministic LLM workflow** rather than a fully autonomous agent:
+1. **Evidence Gathering** – Rules and FAISS retrieval provide accounting signals, candidate classes, and similar examples.
+2. **LLM Decision** – The LLM predicts the voucher type using structured JSON output.
+3. **Confidence Check** – High-confidence predictions are accepted directly.
+4. **Self-Correction** – Low-confidence predictions are re-evaluated with full context.
+5. **Fallback & Review** – Unresolved cases are marked **Other / Miscellaneous** and flagged for human review.
+6. **Fast Path** – Rule-confident transactions can bypass the LLM to reduce inference cost.
+
+## 14. Technology Stack
+
+- **Language:** Python
+- **Data Processing:** pandas, openpyxl
+- **Models & Training:** Hugging Face Transformers, PEFT (LoRA/QLoRA), bitsandbytes
+- **Inference:** llama.cpp / vLLM with constrained structured decoding
+- **Retrieval:** sentence-transformers (BGE/E5), FAISS
+- **Evaluation:** scikit-learn (Accuracy, Precision, Recall, F1, Confusion Matrix)
+- **Interface (Optional):** Streamlit / CLI for Excel upload and prediction download
+
+
+## 15. Expected Features
+
+- Excel (.xlsx) ingestion with canonical schema mapping
+- Classification into **27 voucher categories**
+- Accounting-aware feature enrichment
+- Embedding-based candidate narrowing and few-shot retrieval
+- LoRA/QLoRA fine-tuned open-source LLM with structured JSON output
+- Confidence score and explanation for each prediction
+- Second-pass resolution for low-confidence cases
+- Missing/incomplete field handling with review flags
+- JSON and Excel result export
+- Reproducible evaluation with accuracy, F1, confusion analysis, speed and memory metrics
+- Batched, quantized local inference with a rule-based fast path
+- Optional Streamlit / CLI interface
+
+
+## 16. Implementation Approach
+
+1. **Data Understanding** – Profile the dataset, fields, class balance, and define the canonical schema.
+2. **Feature Engineering** – Create accounting-aware signals for difficult category pairs.
+3. **Baseline** – Build an embedding + rules classifier for benchmarking and candidate narrowing.
+4. **LLM Adaptation** – Apply structured prompting and LoRA/QLoRA fine-tuning.
+5. **Robustness** – Handle missing fields, calibrate confidence, and add second-pass resolution.
+6. **Evaluation** – Test on held-out data using per-class metrics, speed, and memory measurements.
+7. **Packaging** – Provide reproducible scripts, documentation, and an optional upload interface.
+
+ **16.1. Handling Missing and Ambiguous Data**
+
+- Missing fields are passed to the model as explicitly "not provided" rather than silently dropped
+- Training includes examples with fields deliberately masked, so the model learns to rely on whatever evidence is available
+- Low-confidence rows trigger a second-pass prompt with full context
+- Rows that remain unresolved fall back to `Other / Miscellaneous` and are flagged for human review
+
+**16.2. Evaluation Method (Reproducible)**
+
+- Fixed train / validation / test split with a set random seed
+- Metrics: accuracy, macro and per-class precision, recall and F1
+- Dedicated error analysis on the confusable pairs (Purchase vs Sales, Purchase Return vs Sales Return, Contra vs Payment/Receipt, Journal vs Purchase/Sales, stock movements vs Purchase/Sales)
+- Measured inference speed (records per second) and memory use
+- A single script reproduces every reported number
+
+## 17. Expected Output
 
 Minimum output, per the challenge format:
 
@@ -132,55 +233,23 @@ Our extended output also includes a confidence score and a short explanation:
 
 Results are exported as JSON and as Excel, so they can be scored programmatically.
 
-## 9. Technology Stack
+**17.1. Expected Impact**
 
-- **Language:** Python
-- **Data:** pandas, openpyxl
-- **Models and training:** Hugging Face Transformers, PEFT (LoRA/QLoRA), bitsandbytes
-- **Inference:** llama.cpp or vLLM, with constrained / structured decoding
-- **Retrieval:** sentence-transformers (open embedding models), FAISS
-- **Evaluation:** scikit-learn (accuracy, precision, recall, F1, confusion matrix)
-- **Interface (optional):** Streamlit or CLI for uploading an Excel file and downloading predictions
+A drop-in classification layer for VYOM+ that turns extracted transaction data into correctly typed vouchers automatically. It cuts manual accounting effort and errors, and completes the pipeline from invoice extraction to automated voucher creation using only open-source AI.
 
-## 10. Implementation Plan
 
-| Phase | Work |
-|---|---|
-| 1. Data understanding | Profile the provided dataset, field coverage and class balance, and define the canonical schema |
-| 2. Feature engineering | Build enrichment signals for the hard category pairs |
-| 3. Baseline | Embedding plus rules classifier, used as a benchmark and as the narrowing stage |
-| 4. LLM adaptation | Prompt design with structured output, then LoRA/QLoRA fine-tuning on labeled data (augmented where classes are rare) |
-| 5. Robustness | Missing-field handling, confidence calibration, second-pass resolution |
-| 6. Evaluation | Held-out and unseen-record testing, per-class metrics, speed measurement |
-| 7. Packaging | Reproducible run script, documentation, simple upload interface |
-
-## 11. Handling Missing and Ambiguous Data
-
-- Missing fields are passed to the model as explicitly "not provided" rather than silently dropped
-- Training includes examples with fields deliberately masked, so the model learns to rely on whatever evidence is available
-- Low-confidence rows trigger a second-pass prompt with full context
-- Rows that remain unresolved fall back to `Other / Miscellaneous` and are flagged for human review
-
-## 12. Evaluation Method (Reproducible)
-
-- Fixed train / validation / test split with a set random seed
-- Metrics: accuracy, macro and per-class precision, recall and F1
-- Dedicated error analysis on the confusable pairs (Purchase vs Sales, Purchase Return vs Sales Return, Contra vs Payment/Receipt, Journal vs Purchase/Sales, stock movements vs Purchase/Sales)
-- Measured inference speed (records per second) and memory use
-- A single script reproduces every reported number
-
-## 13. Scalability
+## 18. Scalability
 
 - Candidate narrowing keeps LLM prompts short, which cuts per-record cost
 - Batched, quantized inference lets large Excel files run on modest hardware
 - Rule-confident rows can skip the LLM, saving compute
 - The model and its prompts are decoupled, so the model can be swapped for a newer open model without changing the pipeline
 
-## 14. Dependencies
+## 19. Dependencies
 
 Python 3.10+, PyTorch, Hugging Face Transformers and PEFT, sentence-transformers, FAISS, pandas, openpyxl, scikit-learn, llama.cpp or vLLM. All components are open-source and permissively licensed.
 
-## 15. Expected Challenges and Mitigations
+## 20. Expected Challenges and Mitigations
 
 | Challenge | Mitigation |
 |---|---|
@@ -191,9 +260,6 @@ Python 3.10+, PyTorch, Hugging Face Transformers and PEFT, sentence-transformers
 | Limited compute | QLoRA, quantized inference, candidate narrowing |
 | Inference speed | Batching and a rule-confident fast path |
 
-## 16. Expected Impact
-
-A drop-in classification layer for VYOM+ that turns extracted transaction data into correctly typed vouchers automatically. It cuts manual accounting effort and errors, and completes the pipeline from invoice extraction to automated voucher creation using only open-source AI.
 
 ---
 
